@@ -165,6 +165,7 @@ async function callGemini(apiKey, model, prompt, signal) {
   if (!res.ok) {
     if (res.status === 400 || res.status === 403) throw new Error("BADKEY");
     if (res.status === 429) throw new Error("QUOTA");
+    if (res.status === 503 || res.status === 500) throw new Error("BUSY");
     throw new Error(`Gemini 응답 오류 (${res.status})`);
   }
   const data = await res.json();
@@ -173,18 +174,25 @@ async function callGemini(apiKey, model, prompt, signal) {
   return text;
 }
 
-/* ── Claude 미리보기 (claude.ai 아티팩트 안에서만 동작) ── */
+/* ── Claude 미리보기 (claude.ai 아티팩트 안에서만 동작. 배포된 사이트에서는
+   Anthropic API가 브라우저 요청을 막아 CORS 오류로 항상 실패한다) ── */
 async function callClaude(prompt, signal) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal,
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal,
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
+    throw new Error("CLAUDE_UNAVAILABLE");
+  }
   if (!res.ok) throw new Error(`미리보기 API 오류 (${res.status})`);
   const data = await res.json();
   return (data.content || []).map((b) => (b.type === "text" ? b.text : "")).join("\n");
@@ -193,12 +201,16 @@ async function callClaude(prompt, signal) {
 function friendlyError(e) {
   if (e.name === "AbortError") return "생성을 취소했습니다.";
   if (e.message === "BADKEY") return "API 키가 올바르지 않아요. 'API 설정'에서 키를 다시 확인해 주세요.";
-  if (e.message === "QUOTA") return "오늘 사용량을 초과했어요. 잠시 후 다시 시도해 주세요.";
+  if (e.message === "QUOTA") return "요청이 너무 잦거나 오늘 사용량을 초과했어요. 1분 정도 기다렸다가 다시 시도해 주세요.";
+  if (e.message === "BUSY") return "구글 서버가 잠시 혼잡해요. 몇십 초 후 다시 시도해 주세요. (내 설정 문제가 아니에요)";
   if (e.message === "PDFLIB") return "PDF 도구를 불러오지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.";
+  if (e.message === "CLAUDE_UNAVAILABLE")
+    return "'Claude 미리보기'는 claude.ai 안에서만 동작해요. 배포된 사이트에서는 'API 설정'에서 Gemini API 키 모드를 사용해 주세요.";
   if (e.message === "NETWORK")
     return "네트워크 연결에 실패했어요. API 키와 인터넷 연결을 확인해 주세요.";
   return "요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.";
 }
+
 
 /* ══════════════════════════ 메인 앱 ══════════════════════════ */
 export default function App() {
@@ -220,7 +232,7 @@ export default function App() {
 
   const [apiKey, setApiKey] = useState("");
   const [provider, setProvider] = useState("gemini");
-  const [model, setModel] = useState("gemini-2.0-flash");
+  const [model, setModel] = useState("gemini-2.5-flash");
   const [showSetup, setShowSetup] = useState(false);
   const [setupDone, setSetupDone] = useState(false);
 
@@ -234,7 +246,7 @@ export default function App() {
       if (api) {
         setApiKey(api.key || "");
         setProvider(api.provider || "gemini");
-        setModel(api.model || "gemini-2.0-flash");
+        setModel(api.model || "gemini-2.5-flash");
         setSetupDone(true);
       }
       const saved = await loadKey("awm:settings", null);
@@ -378,6 +390,9 @@ export default function App() {
     el.classList.add("exporting");
     try {
       await ensureHtml2pdf();
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch {}
+      }
       const filename = `${(meta && (meta.design.title || meta.topic)) || "활동지"}${tab === "teacher" ? "_교사용" : ""}.pdf`;
       await window
         .html2pdf()
@@ -389,6 +404,7 @@ export default function App() {
             scale: 2,
             useCORS: true,
             backgroundColor: "#ffffff",
+            windowWidth: el.scrollWidth,
             onclone: (doc) => doc.querySelectorAll(".no-print").forEach((n) => n.remove()),
           },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
@@ -397,7 +413,12 @@ export default function App() {
         .from(el)
         .save();
     } catch (e) {
-      setError(friendlyError(e));
+      console.error("PDF export failed:", e);
+      setError(
+        "PDF 생성에 실패했어요. 대신 '인쇄' 버튼을 누른 뒤 인쇄 대화상자에서 '대상'을 PDF로 저장으로 바꿔서 저장해 보세요. (" +
+          (e && e.message ? e.message : "알 수 없는 오류") +
+          ")"
+      );
     } finally {
       el.classList.remove("exporting");
       setExporting(false);
@@ -896,7 +917,7 @@ function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
       setTestMsg({ ok: false, text: "API 키를 입력해 주세요." });
       return;
     }
-    onSave({ key: key.trim(), provider: prov, model: mdl.trim() || "gemini-2.0-flash" });
+    onSave({ key: key.trim(), provider: prov, model: mdl.trim() || "gemini-2.5-flash" });
   };
 
   return (
@@ -973,7 +994,6 @@ function Field({ label, children }) {
 
 /* ══════════════════════════ 스타일 ══════════════════════════ */
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
 
 .app{
   --bg:#F2F7FB; --panel:#FFFFFF; --ink:#33383D; --muted:#7A828A;
@@ -1016,13 +1036,13 @@ button{cursor:pointer}
 .btn.big{padding:10px 24px;font-size:16px;letter-spacing:.5px}
 .btn.small{padding:4px 10px;font-size:12px;border-radius:8px}
 
-/* 본문 2단 */
-.body{display:flex;align-items:stretch;min-height:calc(100vh - 67px)}
-.panel{width:380px;min-width:300px;padding:18px;overflow-y:auto;max-height:calc(100vh - 67px);
+/* 본문 2단 — 양쪽 다 내용만큼 자연스럽게 길어지고, 페이지 전체가 함께 스크롤된다 */
+.body{display:flex;align-items:flex-start;min-height:calc(100vh - 67px)}
+.panel{width:380px;min-width:300px;padding:18px;
   background:var(--panel);border-right:1px solid var(--line)}
 @media (max-width: 860px){
   .body{flex-direction:column}
-  .panel{width:100%;max-height:none;border-right:none;border-bottom:1px solid var(--line)}
+  .panel{width:100%;border-right:none;border-bottom:1px solid var(--line)}
 }
 
 /* 섹션 / 필드 */
@@ -1073,7 +1093,7 @@ input[type=range]{width:100%;accent-color:var(--sky)}
   border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 
 /* ── A4 페이지 (정확히 210 × 297 mm) ── */
-.sheet-scroll{flex:1;overflow:auto;padding:6px 22px 40px}
+.sheet-scroll{flex:1;padding:6px 22px 40px}
 .pages{display:flex;flex-direction:column;align-items:center;gap:6px}
 .page{position:relative;flex:none;width:210mm;height:297mm;overflow:hidden;
   background:#fff;color:#33383D;padding:14mm 14mm;border-radius:4px;
