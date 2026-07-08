@@ -4,7 +4,8 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
    AI 활동지 메이커 (배포용 · BYOK)
    - 주제(차시 제목)만 넣으면 어울리는 활동 3~5개를 자동 구성
    - 미리보기·출력 모두 정확한 A4(210×297mm) 페이지 단위로 자동 분할
-   - PDF 저장: html2pdf.js(클라이언트 생성)라 어디서든 파일로 저장 가능
+   - PDF 저장: 브라우저 인쇄 대화상자에서 '대상: PDF로 저장'을 선택 (별도 라이브러리 없이
+     네이티브 인쇄 파이프라인을 사용해 안정적으로 동작)
    - 인쇄: 브라우저 인쇄 대화상자
    ────────────────────────────────────────────────────────── */
 
@@ -60,17 +61,7 @@ async function saveKey(key, value) {
   try { await window.storage.set(key, JSON.stringify(value)); } catch {}
 }
 
-/* ── html2pdf 로더 (cdnjs) ── */
-function ensureHtml2pdf() {
-  if (window.html2pdf) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("PDFLIB"));
-    document.head.appendChild(s);
-  });
-}
+
 
 /* ── 프롬프트 ── */
 function buildPrompt(opts, count) {
@@ -203,7 +194,6 @@ function friendlyError(e) {
   if (e.message === "BADKEY") return "API 키가 올바르지 않아요. 'API 설정'에서 키를 다시 확인해 주세요.";
   if (e.message === "QUOTA") return "요청이 너무 잦거나 오늘 사용량을 초과했어요. 1분 정도 기다렸다가 다시 시도해 주세요.";
   if (e.message === "BUSY") return "구글 서버가 잠시 혼잡해요. 몇십 초 후 다시 시도해 주세요. (내 설정 문제가 아니에요)";
-  if (e.message === "PDFLIB") return "PDF 도구를 불러오지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.";
   if (e.message === "CLAUDE_UNAVAILABLE")
     return "'Claude 미리보기'는 claude.ai 안에서만 동작해요. 배포된 사이트에서는 'API 설정'에서 Gemini API 키 모드를 사용해 주세요.";
   if (e.message === "NETWORK")
@@ -224,7 +214,6 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [history, setHistory] = useState([]);
   const [tplName, setTplName] = useState("");
@@ -377,51 +366,7 @@ export default function App() {
   /* ── 인쇄 ── */
   const print = () => {
     try { window.print(); } catch {
-      setError("이 환경에서는 인쇄 창이 차단됐어요. 'PDF 저장' 버튼을 이용해 주세요.");
-    }
-  };
-
-  /* ── PDF 저장 (html2pdf) ── */
-  const exportPDF = async () => {
-    if (!pagesRef.current || exporting) return;
-    setExporting(true);
-    setError(null);
-    const el = pagesRef.current;
-    el.classList.add("exporting");
-    try {
-      await ensureHtml2pdf();
-      if (document.fonts && document.fonts.ready) {
-        try { await document.fonts.ready; } catch {}
-      }
-      const filename = `${(meta && (meta.design.title || meta.topic)) || "활동지"}${tab === "teacher" ? "_교사용" : ""}.pdf`;
-      await window
-        .html2pdf()
-        .set({
-          margin: 0,
-          filename,
-          image: { type: "jpeg", quality: 0.96 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            windowWidth: el.scrollWidth,
-            onclone: (doc) => doc.querySelectorAll(".no-print").forEach((n) => n.remove()),
-          },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["css", "legacy"] },
-        })
-        .from(el)
-        .save();
-    } catch (e) {
-      console.error("PDF export failed:", e);
-      setError(
-        "PDF 생성에 실패했어요. 대신 '인쇄' 버튼을 누른 뒤 인쇄 대화상자에서 '대상'을 PDF로 저장으로 바꿔서 저장해 보세요. (" +
-          (e && e.message ? e.message : "알 수 없는 오류") +
-          ")"
-      );
-    } finally {
-      el.classList.remove("exporting");
-      setExporting(false);
+      setError("이 환경에서는 인쇄 창이 열리지 않았어요. 브라우저 메뉴에서 '인쇄'를 직접 실행해 주세요.");
     }
   };
 
@@ -497,10 +442,7 @@ export default function App() {
           <button className="btn ghost" onClick={() => setEditing((e) => !e)} disabled={!activities}>
             {editing ? "편집 끝내기" : "결과 편집"}
           </button>
-          <button className="btn" onClick={print} disabled={!activities}>인쇄</button>
-          <button className="btn primary" onClick={exportPDF} disabled={!activities || exporting}>
-            {exporting ? "PDF 만드는 중…" : "PDF 저장"}
-          </button>
+          <button className="btn primary" onClick={print} disabled={!activities}>인쇄 · PDF 저장</button>
         </div>
       </header>
 
@@ -1104,8 +1046,6 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 .tabs.page-mode{margin-left:2px}
 .tabs.page-mode button{padding:9px 14px;font-size:13px}
 .page-num{font-size:11px;color:var(--muted);margin:0 0 14px;font-family:'Jua';letter-spacing:.5px}
-.exporting{gap:0 !important}
-.exporting .page{box-shadow:none;border-radius:0}
 
 /* 측정용 요소(화면 밖) — 페이지와 같은 내용 폭에서 높이를 잰다 */
 .measure{position:absolute;left:-9999px;top:0;width:210mm;padding:0 14mm;
