@@ -177,37 +177,11 @@ async function callGemini(apiKey, model, prompt, signal) {
   return text;
 }
 
-/* ── Claude 미리보기 (claude.ai 아티팩트 안에서만 동작. 배포된 사이트에서는
-   Anthropic API가 브라우저 요청을 막아 CORS 오류로 항상 실패한다) ── */
-async function callClaude(prompt, signal) {
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal,
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-  } catch (e) {
-    if (e.name === "AbortError") throw e;
-    throw new Error("CLAUDE_UNAVAILABLE");
-  }
-  if (!res.ok) throw new Error(`미리보기 API 오류 (${res.status})`);
-  const data = await res.json();
-  return (data.content || []).map((b) => (b.type === "text" ? b.text : "")).join("\n");
-}
-
 function friendlyError(e) {
   if (e.name === "AbortError") return "생성을 취소했습니다.";
   if (e.message === "BADKEY") return "API 키가 올바르지 않아요. 'API 설정'에서 키를 다시 확인해 주세요.";
   if (e.message === "QUOTA") return "요청이 너무 잦거나 오늘 사용량을 초과했어요. 1분 정도 기다렸다가 다시 시도해 주세요.";
   if (e.message === "BUSY") return "구글 서버가 잠시 혼잡해요. 몇십 초 후 다시 시도해 주세요. (내 설정 문제가 아니에요)";
-  if (e.message === "CLAUDE_UNAVAILABLE")
-    return "'Claude 미리보기'는 claude.ai 안에서만 동작해요. 배포된 사이트에서는 'API 설정'에서 Gemini API 키 모드를 사용해 주세요.";
   if (e.message === "NETWORK")
     return "네트워크 연결에 실패했어요. API 키와 인터넷 연결을 확인해 주세요.";
   return "요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.";
@@ -232,7 +206,6 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState("gemini");
   const [model, setModel] = useState("gemini-2.5-flash");
   const [showSetup, setShowSetup] = useState(false);
   const [setupDone, setSetupDone] = useState(false);
@@ -244,9 +217,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const api = await loadKey("awm:api", null);
-      if (api) {
-        setApiKey(api.key || "");
-        setProvider(api.provider || "gemini");
+      if (api && api.key) {
+        setApiKey(api.key);
         setModel(api.model || "gemini-2.5-flash");
         setSetupDone(true);
       }
@@ -284,7 +256,7 @@ export default function App() {
       setError("주제(차시 제목)를 먼저 입력해 주세요. 예: 우리 고장의 문화유산");
       return;
     }
-    if (provider === "gemini" && !apiKey) {
+    if (!apiKey) {
       setShowSetup(true);
       return;
     }
@@ -295,37 +267,10 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    if (provider === "gemini") {
-      tickRef.current = setInterval(() => setProgress((p) => Math.min(p + Math.ceil(Math.random() * 4), 92)), 350);
-    }
+    tickRef.current = setInterval(() => setProgress((p) => Math.min(p + Math.ceil(Math.random() * 4), 92)), 350);
 
     try {
-      let all = [];
-      if (provider === "gemini") {
-        all = parseActivities(await callGemini(apiKey, model, buildPrompt(opts, opts.count), controller.signal));
-      } else {
-        /* Claude 미리보기: 응답 길이 제한이 있어 활동 2개씩 나눠 생성 */
-        const CHUNK = 2;
-        const chunks = [];
-        for (let left = opts.count; left > 0; left -= CHUNK) chunks.push(Math.min(CHUNK, left));
-        for (let i = 0; i < chunks.length; i++) {
-          const prompt =
-            buildPrompt(opts, chunks[i]) +
-            (all.length
-              ? `\n\n[이미 만든 활동 — 아래와 형태·내용이 겹치지 않게, 수업 흐름상 그 다음에 올 활동만 생성]\n` +
-                all.map((a, idx) => `${idx + 1}. ${a.title} (${(a.layout || {}).type || ""})`).join("\n")
-              : "");
-          let acts;
-          try {
-            acts = parseActivities(await callClaude(prompt, controller.signal));
-          } catch (e) {
-            if (e.name === "AbortError") throw e;
-            acts = parseActivities(await callClaude(prompt, controller.signal));
-          }
-          all.push(...acts.slice(0, chunks[i]));
-          setProgress(Math.round(((i + 1) / chunks.length) * 100));
-        }
-      }
+      const all = parseActivities(await callGemini(apiKey, model, buildPrompt(opts, opts.count), controller.signal));
 
       const final = all.slice(0, opts.count).map(normalize);
       setProgress(100);
@@ -351,7 +296,7 @@ export default function App() {
       setLoading(false);
       abortRef.current = null;
     }
-  }, [opts, history, provider, apiKey, model]);
+  }, [opts, history, apiKey, model]);
 
   const cancel = () => abortRef.current && abortRef.current.abort();
 
@@ -424,13 +369,11 @@ export default function App() {
       {(needSetup || showSetup) && (
         <Setup
           apiKey={apiKey}
-          provider={provider}
           model={model}
           canClose={setupDone}
           onClose={() => setShowSetup(false)}
           onSave={(cfg) => {
             setApiKey(cfg.key);
-            setProvider(cfg.provider);
             setModel(cfg.model);
             setSetupDone(true);
             setShowSetup(false);
@@ -873,9 +816,8 @@ function mergeOpts(saved) {
 }
 
 /* ── API 설정 화면 ── */
-function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
+function Setup({ apiKey, model, canClose, onClose, onSave }) {
   const [key, setKey] = useState(apiKey);
-  const [prov, setProv] = useState(provider);
   const [mdl, setMdl] = useState(model);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState(null);
@@ -884,13 +826,8 @@ function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
     setTesting(true);
     setTestMsg(null);
     try {
-      if (prov === "claude") {
-        await callClaude("안녕하세요 라고만 답해 주세요.", undefined);
-        setTestMsg({ ok: true, text: "연결 성공! Claude 미리보기를 사용할 수 있어요." });
-      } else {
-        await callGemini(key.trim(), mdl, "안녕하세요 라고만 답해 주세요.", undefined);
-        setTestMsg({ ok: true, text: "연결 성공! 이 키로 활동지를 만들 수 있어요." });
-      }
+      await callGemini(key.trim(), mdl.trim() || "gemini-2.5-flash", "안녕하세요 라고만 답해 주세요.", undefined);
+      setTestMsg({ ok: true, text: "연결 성공! 이 키로 활동지를 만들 수 있어요." });
     } catch (e) {
       setTestMsg({ ok: false, text: friendlyError(e) });
     } finally {
@@ -899,11 +836,11 @@ function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
   };
 
   const save = () => {
-    if (prov === "gemini" && !key.trim()) {
+    if (!key.trim()) {
       setTestMsg({ ok: false, text: "API 키를 입력해 주세요." });
       return;
     }
-    onSave({ key: key.trim(), provider: prov, model: mdl.trim() || "gemini-2.5-flash" });
+    onSave({ key: key.trim(), model: mdl.trim() || "gemini-2.5-flash" });
   };
 
   return (
@@ -917,41 +854,26 @@ function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
           </div>
         </div>
 
-        <div className="setup-provider">
-          <label className={"prov" + (prov === "gemini" ? " on" : "")}>
-            <input type="radio" name="prov" checked={prov === "gemini"} onChange={() => setProv("gemini")} />
-            <span><b>Gemini API 키 사용</b><small>배포용 · 각자 자신의 키로 이용 (BYOK)</small></span>
-          </label>
-          <label className={"prov" + (prov === "claude" ? " on" : "")}>
-            <input type="radio" name="prov" checked={prov === "claude"} onChange={() => setProv("claude")} />
-            <span><b>Claude 미리보기</b><small>키 없이 테스트 · claude.ai 안에서만 동작</small></span>
-          </label>
-        </div>
-
-        {prov === "gemini" && (
-          <>
-            <ol className="setup-steps">
-              <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>에서 무료 API 키를 발급받아요.</li>
-              <li>발급받은 키를 아래에 붙여 넣어요.</li>
-              <li>연결 테스트 후 저장하면 끝!</li>
-            </ol>
-            <label className="field">
-              <span className="field-label">Gemini API Key</span>
-              <input type="password" value={key} placeholder="AIza..." onChange={(e) => setKey(e.target.value)} />
-            </label>
-            <label className="field">
-              <span className="field-label">모델 (기본값 권장)</span>
-              <input value={mdl} onChange={(e) => setMdl(e.target.value)} />
-            </label>
-            <p className="hint">키는 이 브라우저(LocalStorage)에만 저장되며 별도 서버로 전송되지 않아요. Gemini 호출 시 Google에만 전달됩니다. 'API 설정'에서 언제든 바꿀 수 있어요.</p>
-          </>
-        )}
+        <ol className="setup-steps">
+          <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>에서 무료 API 키를 발급받아요.</li>
+          <li>발급받은 키를 아래에 붙여 넣어요.</li>
+          <li>연결 테스트 후 저장하면 끝!</li>
+        </ol>
+        <label className="field">
+          <span className="field-label">Gemini API Key</span>
+          <input type="password" value={key} placeholder="AIza..." onChange={(e) => setKey(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="field-label">모델 (기본값 권장)</span>
+          <input value={mdl} onChange={(e) => setMdl(e.target.value)} />
+        </label>
+        <p className="hint">키는 이 브라우저(LocalStorage)에만 저장되며 별도 서버로 전송되지 않아요. Gemini 호출 시 Google에만 전달됩니다. 'API 설정'에서 언제든 바꿀 수 있어요.</p>
 
         {testMsg && <p className={"test-msg" + (testMsg.ok ? " ok" : " bad")}>{testMsg.text}</p>}
 
         <div className="setup-actions">
           {canClose && <button className="btn" onClick={onClose}>닫기</button>}
-          <button className="btn" onClick={test} disabled={testing || (prov === "gemini" && !key.trim())}>
+          <button className="btn" onClick={test} disabled={testing || !key.trim()}>
             {testing ? "테스트 중…" : "연결 테스트"}
           </button>
           <button className="btn primary" onClick={save}>저장하고 시작하기</button>
@@ -1230,14 +1152,6 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 .setup-head{display:flex;gap:14px;align-items:flex-start;margin-bottom:18px}
 .setup-head h1{font-family:'Jua';font-weight:400;font-size:20px;margin:0 0 4px}
 .setup-head p{margin:0;font-size:13px;color:var(--muted)}
-.setup-provider{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-@media (max-width:560px){.setup-provider{grid-template-columns:1fr}}
-.prov{display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--line);border-radius:14px;
-  padding:12px;cursor:pointer}
-.prov.on{border-color:var(--sky);background:var(--sky-soft)}
-.prov input{accent-color:var(--sky);margin-top:3px}
-.prov b{display:block;font-size:13.5px}
-.prov small{display:block;font-size:11.5px;color:var(--muted);line-height:1.4;margin-top:2px}
 .setup-steps{margin:0 0 14px;padding-left:20px;font-size:13px;line-height:1.9}
 .setup-steps a{color:var(--sky-deep)}
 .test-msg{font-size:13px;border-radius:10px;padding:8px 12px;margin:4px 0 0}
