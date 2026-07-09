@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 
 /* ──────────────────────────────────────────────────────────
    AI 활동지 메이커 (배포용 · BYOK)
-   - 주제(차시 제목)만 넣으면 어울리는 활동 3~5개를 자동 구성
+   - 주제(차시 제목)만 넣으면 어울리는 활동 2~6개를 자동 구성
    - 미리보기·출력 모두 정확한 A4(210×297mm) 페이지 단위로 자동 분할
    - PDF 저장: 브라우저 인쇄 대화상자에서 '대상: PDF로 저장'을 선택 (별도 라이브러리 없이
      네이티브 인쇄 파이프라인을 사용해 안정적으로 동작)
@@ -27,6 +27,11 @@ const HEAD_FIELDS = [
   { key: "score", label: "점수칸" },
   { key: "stamp", label: "확인칸" },
 ];
+const MOODS = [
+  { key: "playful", label: "발랄함", desc: "알록달록하고 통통 튀는 느낌" },
+  { key: "calm", label: "차분함", desc: "은은하고 다정한 느낌" },
+  { key: "serious", label: "진지함", desc: "격식 있고 담백한 느낌" },
+];
 
 const DEFAULT_OPTS = {
   grade: 3,
@@ -35,6 +40,7 @@ const DEFAULT_OPTS = {
   intent: "",
   level: "보통",
   count: 4,
+  mood: "playful",
   extras: { game: false, pair: false, draw: false, realLife: false },
   design: {
     title: "",
@@ -66,6 +72,11 @@ async function saveKey(key, value) {
 /* ── 프롬프트 ── */
 function buildPrompt(opts, count) {
   const extras = EXTRAS.filter((e) => opts.extras[e.key]).map((e) => e.label);
+  const moodTone = {
+    playful: `밝고 신나는 말투. 제목과 활동 이름에 재미있는 표현을 쓰고, 안내문에는 느낌표와 의성어·의태어를 적절히 섞어 "~해 볼까요?", "~해 봐요!" 같은 통통 튀는 문체를 사용`,
+    calm: `차분하고 다정한 말투. 과한 느낌표나 감탄사 없이, "~해 봅시다", "~해 보아요"처럼 편안하게 타이르는 문체를 사용`,
+    serious: `격식 있고 담백한 말투. 감탄사·의성어·이모지풍 표현을 쓰지 않고, "~해 봅시다", "~하도록 합니다"처럼 신중하고 어른스러운 문어체를 사용. 다루는 주제의 무게감을 존중하는 어조 유지`,
+  }[opts.mood] || "";
   const lines = [
     `당신은 대한민국 초등학교 ${opts.grade}학년 담임교사이자 수업 설계 전문가입니다.`,
     `아래 차시에 어울리는 '활동지'를 설계해 주세요. 문제집이 아니라, 학생이 쓰고 그리고 이야기하며 참여하는 활동 중심 학습지입니다.`,
@@ -82,7 +93,8 @@ function buildPrompt(opts, count) {
     `[설계 원칙]`,
     `- 활동들은 생각 열기 → 탐구·표현 → 정리·나눔의 자연스러운 흐름을 이루도록 배치`,
     `- 활동마다 형태(layout)가 서로 다르게, 40분 차시 안에 A4 1~2장으로 가능한 분량`,
-    `- 안내문(instruction)은 ${opts.grade}학년이 혼자 읽고 이해할 수 있는 쉽고 다정한 말로 1~2문장 ("~해 보세요" 문체)`,
+    `- 안내문(instruction)은 ${opts.grade}학년이 혼자 읽고 이해할 수 있는 쉬운 말로 1~2문장`,
+    moodTone ? `- 말투(중요): ${moodTone}. title·instruction·tip·example 모두 이 어조로 통일` : null,
     `- 2022 개정 교육과정 수준을 지키고 오개념 표현 금지`,
     `- tip은 교사를 위한 구체적 지도 팁 1~2문장, example은 학생 반응 예시 답안 1~2문장`,
     ``,
@@ -90,7 +102,7 @@ function buildPrompt(opts, count) {
     `- "write": 글로 쓰는 활동. lines(밑줄 줄 수, 3~6) 지정`,
     `- "draw": 그리기·꾸미기 활동. 빈 그리기 칸 제공`,
     `- "table": 표 채우기. columns(열 제목 배열 2~3개), rows(빈 줄 수 2~4) 지정`,
-    `- "mindmap": 생각 그물. center(가운데 낱말), branches(빈 가지 수 4~6) 지정`,
+    `- "mindmap": 생각 그물. 가운데 칸과 가지 칸 모두 학생이 직접 손으로 쓰는 빈 칸이다(가운데도 비어 있음). branches(빈 가지 수 4~6) 지정. instruction에 가운데 칸에 무엇을 적어야 하는지 반드시 구체적으로 안내`,
     `- "checklist": 항목 점검·고르기. items(항목 문장 배열 3~5개) 지정`,
     `- "pair": 짝 토의. 내 생각/짝 생각을 나누어 적는 칸 제공`,
     ``,
@@ -430,9 +442,9 @@ export default function App() {
       {/* ── 상단 바 ── */}
       <header className="topbar no-print">
         <div className="logo">
-          <span className="logo-mark">가나</span>
+          <span className="logo-mark" aria-hidden="true">📝</span>
           <div>
-            <div className="logo-title">AI 활동지 메이커</div>
+            <div className="logo-title">Sheetly: AI 활동지 메이커</div>
             <div className="logo-sub">주제만 넣으면 어울리는 활동이 뚝딱!</div>
           </div>
         </div>
@@ -472,12 +484,27 @@ export default function App() {
 
           <Section title="활동 구성">
             <Field label={`활동 수 — ${opts.count}가지`}>
-              <input type="range" min="3" max="5" step="1" value={opts.count} onChange={(e) => set({ count: +e.target.value })} />
+              <input type="range" min="2" max="6" step="1" value={opts.count} onChange={(e) => set({ count: +e.target.value })} />
             </Field>
             <Field label="수준">
               <div className="seg">
                 {LEVELS.map((d) => (
                   <button key={d} className={opts.level === d ? "on" : ""} onClick={() => set({ level: d })}>{d}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label="활동지 분위기">
+              <div className="mood-picker">
+                {MOODS.map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    className={"mood-btn mood-" + m.key + (opts.mood === m.key ? " on" : "")}
+                    onClick={() => set({ mood: m.key })}
+                  >
+                    <span className="mood-label">{m.label}</span>
+                    <span className="mood-desc">{m.desc}</span>
+                  </button>
                 ))}
               </div>
             </Field>
@@ -567,7 +594,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="sheet-scroll">
+          <div className={"sheet-scroll mood-" + view.mood}>
             {!activities ? (
               <div className="pages" ref={pagesRef}>
                 <div className="page">
@@ -575,7 +602,7 @@ export default function App() {
                   <div className="empty">
                     <div className="empty-face" aria-hidden="true">✎</div>
                     <p className="empty-title">아직 만들어진 활동이 없어요</p>
-                    <p>왼쪽에 <b>주제(차시 제목)</b>를 적고 <b>활동지 생성</b>을 눌러 주세요.<br />주제에 어울리는 활동 3~5가지가 흐름에 맞게 만들어져요.</p>
+                    <p>왼쪽에 <b>주제(차시 제목)</b>를 적고 <b>활동지 생성</b>을 눌러 주세요.<br />주제에 어울리는 활동 2~6가지가 흐름에 맞게 만들어져요.</p>
                   </div>
                 </div>
                 <div className="page-num no-print">A4 · 210 × 297 mm</div>
@@ -695,13 +722,26 @@ function FitSheet({ headerEl, blockEls, teacher, editing, pagesRef }) {
   const measureRef = useRef(null);
   const probeRef = useRef(null);
   const [scale, setScale] = useState(1);
+  const [balanceGap, setBalanceGap] = useState(0); // 여유 공간을 활동 사이 간격으로 균등 배분
 
   const compute = useCallback(() => {
     if (!measureRef.current || !probeRef.current) return;
     const cap = probeRef.current.offsetHeight; // 297mm - 상하 여백의 px 환산값
+    const kids = Array.from(measureRef.current.children);
+    if (!kids.length) return;
     const natural = measureRef.current.offsetHeight; // 축소 없이 쌓았을 때 실제 높이
     if (!natural) return;
-    setScale(natural > cap ? cap / natural : 1);
+    if (natural > cap) {
+      /* 넘칠 때: 균일 축소로 한 장에 맞춘다 (여유 공간이 없으므로 간격 배분은 하지 않음) */
+      setScale(cap / natural);
+      setBalanceGap(0);
+    } else {
+      /* 남을 때: 축소하지 않고, 남는 공간을 활동 사이 간격에 고르게 나눠 아래쪽 쏠림을 없앤다 */
+      setScale(1);
+      const blockCount = kids.length - 1; // kids[0]은 머리글
+      const extra = cap - natural;
+      setBalanceGap(blockCount > 1 ? extra / (blockCount - 1) : 0);
+    }
   }, []);
 
   useLayoutEffect(() => {
@@ -731,7 +771,11 @@ function FitSheet({ headerEl, blockEls, teacher, editing, pagesRef }) {
             suppressContentEditableWarning
           >
             {headerEl}
-            {blockEls}
+            {blockEls.map((el, i) => (
+              <div key={i} style={balanceGap > 0 && i < blockEls.length - 1 ? { marginBottom: balanceGap } : undefined}>
+                {el}
+              </div>
+            ))}
           </div>
         </div>
         <div className="page-num no-print">1 / 1 · A4{scale < 1 ? ` · ${Math.round(scale * 100)}% 축소로 한 장에 맞춤` : ""}</div>
@@ -773,7 +817,7 @@ function ActivityStudent({ a }) {
       {L.type === "mindmap" && (
         <div className="lay-mind">
           {Array.from({ length: Math.ceil(L.branches / 2) }).map((_, i) => <span className="bubble empty" key={"t" + i} />)}
-          <span className="bubble center">{L.center || "주제"}</span>
+          <span className="bubble center" aria-hidden="true" />
           {Array.from({ length: Math.floor(L.branches / 2) }).map((_, i) => <span className="bubble empty" key={"b" + i} />)}
         </div>
       )}
@@ -866,9 +910,9 @@ function Setup({ apiKey, provider, model, canClose, onClose, onSave }) {
     <div className="setup no-print" role="dialog" aria-label="API 설정">
       <div className="setup-card">
         <div className="setup-head">
-          <span className="logo-mark">가나</span>
+          <span className="logo-mark" aria-hidden="true">📝</span>
           <div>
-            <h1>AI 활동지 메이커 시작하기</h1>
+            <h1>Sheetly 시작하기</h1>
             <p>선생님의 Gemini API 키를 연결하면 바로 사용할 수 있어요.</p>
           </div>
         </div>
@@ -961,7 +1005,7 @@ button{cursor:pointer}
   padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .logo{display:flex;align-items:center;gap:12px}
 .logo-mark{width:42px;height:42px;border-radius:14px;background:var(--sun);color:#6B4A00;
-  display:inline-flex;align-items:center;justify-content:center;font-family:'Jua';font-size:16px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:22px;
   transform:rotate(-4deg);flex:none}
 .logo-title{font-family:'Jua',sans-serif;font-size:19px}
 .logo-sub{font-size:12px;color:var(--muted)}
@@ -1008,6 +1052,14 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 .chip{border:1.5px solid var(--line);background:var(--panel);border-radius:999px;padding:5px 13px;font-size:12px}
 .chip.on{background:var(--sun-soft);border-color:var(--sun);color:inherit}
 
+/* 분위기 선택 */
+.mood-picker{display:flex;flex-direction:column;gap:6px}
+.mood-btn{display:flex;align-items:baseline;gap:8px;text-align:left;
+  border:1.5px solid var(--line);background:var(--panel);border-radius:10px;padding:8px 12px}
+.mood-btn.on{border-color:var(--sky);background:var(--sky-soft)}
+.mood-label{font-size:13.5px;font-weight:600}
+.mood-desc{font-size:11.5px;color:var(--muted)}
+
 /* 템플릿 / 기록 / 프롬프트 */
 .tpl-save{display:flex;gap:6px;margin-bottom:8px}
 .tpl{display:flex;gap:6px;margin-bottom:6px}
@@ -1047,6 +1099,37 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 .tabs.page-mode button{padding:9px 14px;font-size:13px}
 .page-num{font-size:11px;color:var(--muted);margin:0 0 14px;font-family:'Jua';letter-spacing:.5px}
 
+/* ── 분위기(mood) 테마 변수 — 측정용 사본과 실제 페이지 모두 같은 부모(.sheet-scroll) 아래 있어 동일하게 적용된다 ── */
+.sheet-scroll{
+  --sh-acc:#4B9CD3; --sh-acc-ink:#2F7AAE; --sh-acc-soft:#E4F0F9;
+  --sh-acc2:#F0AEC0; --sh-acc2-ink:#D97A94; --sh-acc2-soft:#FDE3EA;
+  --sh-num-bg:#FFC94D; --sh-num-ink:#6B4A00; --sh-num-radius:50%;
+  --sh-border:#A9C9E0; --sh-line-style:dashed; --sh-line-w:2px;
+  --sh-radius-lg:18px; --sh-radius-md:16px;
+  --sh-head-font:'Jua',sans-serif; --sh-head-weight:400;
+  --sh-decor:
+    radial-gradient(circle at 12px 12px,#FFF3D6 6px,transparent 7px),
+    radial-gradient(circle at calc(100% - 12px) 12px,#FDE3EA 6px,transparent 7px);
+}
+.sheet-scroll.mood-calm{
+  --sh-acc:#5B8A72; --sh-acc-ink:#3F6B54; --sh-acc-soft:#E7F0EA;
+  --sh-acc2:#C9B48C; --sh-acc2-ink:#9C8258; --sh-acc2-soft:#F3ECDD;
+  --sh-num-bg:#CFE0D5; --sh-num-ink:#3F6B54; --sh-num-radius:50%;
+  --sh-border:#BFD3C6; --sh-line-style:solid; --sh-line-w:1.5px;
+  --sh-radius-lg:13px; --sh-radius-md:12px;
+  --sh-head-font:'Apple SD Gothic Neo','Noto Sans KR',sans-serif; --sh-head-weight:700;
+  --sh-decor:none;
+}
+.sheet-scroll.mood-serious{
+  --sh-acc:#3A4656; --sh-acc-ink:#2A3340; --sh-acc-soft:#EAEDF1;
+  --sh-acc2:#8B95A1; --sh-acc2-ink:#5A6472; --sh-acc2-soft:#EDEFF2;
+  --sh-num-bg:#3A4656; --sh-num-ink:#fff; --sh-num-radius:8px;
+  --sh-border:#B7BEC7; --sh-line-style:solid; --sh-line-w:1.5px;
+  --sh-radius-lg:4px; --sh-radius-md:4px;
+  --sh-head-font:'Apple SD Gothic Neo','Noto Sans KR',sans-serif; --sh-head-weight:700;
+  --sh-decor:none;
+}
+
 /* 측정용 요소(화면 밖) — 페이지와 같은 내용 폭에서 높이를 잰다 */
 .measure{position:absolute;left:-9999px;top:0;width:210mm;padding:0 14mm;
   visibility:hidden;pointer-events:none;background:#fff;color:#33383D}
@@ -1055,29 +1138,27 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 
 /* 머리글 */
 .hwrap{padding-bottom:18px;overflow:hidden}
-.sheet-head{border:2.5px solid #4B9CD3;border-radius:18px;padding:13px 18px 11px;margin:0;
-  position:relative;background:
-    radial-gradient(circle at 12px 12px,#FFF3D6 6px,transparent 7px),
-    radial-gradient(circle at calc(100% - 12px) 12px,#FDE3EA 6px,transparent 7px),#fff}
-.sheet-eyebrow{display:inline-block;font-family:'Jua';font-size:12px;color:#2F7AAE;
-  background:#E4F0F9;border-radius:999px;padding:3px 12px;margin-bottom:6px}
-.sheet-title{font-family:'Jua',sans-serif;font-weight:400;font-size:26px;margin:0 0 8px;line-height:1.3;color:#33383D;text-align:center}
+.sheet-head{border:2.5px solid var(--sh-acc);border-radius:var(--sh-radius-lg);padding:13px 18px 11px;margin:0;
+  position:relative;background:var(--sh-decor),#fff}
+.sheet-eyebrow{display:inline-block;font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);font-size:12px;color:var(--sh-acc-ink);
+  background:var(--sh-acc-soft);border-radius:999px;padding:3px 12px;margin-bottom:6px}
+.sheet-title{font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);font-size:26px;margin:0 0 8px;line-height:1.3;color:#33383D;text-align:center}
 .sheet-info{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:#4A5157;align-items:flex-end}
 .sheet-info.right{width:100%;justify-content:flex-end}
 .blank{display:inline-flex;align-items:flex-end;gap:6px;white-space:nowrap}
 .blank u{display:inline-block;width:90px;border-bottom:1.5px solid #9DB4C4;text-decoration:none;height:1.1em}
 .blank u.short{width:38px}
 .blank.wide u{width:130px}
-.stamp-slot{width:50px;height:50px;border:2px dashed #F79BB1;border-radius:50%;
-  display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:#D97A94;margin-left:auto}
+.stamp-slot{width:50px;height:50px;border:2px dashed var(--sh-acc2);border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--sh-acc2-ink);margin-left:auto}
 
 /* ── 활동 블록 ── */
 .blockwrap{padding-bottom:20px;overflow:hidden}
 .act,.t-act{break-inside:avoid}
 .a-head{display:flex;gap:11px;align-items:flex-start}
-.a-num{flex:none;width:30px;height:30px;border-radius:50%;background:#FFC94D;color:#6B4A00;
-  display:flex;align-items:center;justify-content:center;font-family:'Jua';font-size:15px;margin-top:2px}
-.a-title{margin:0;font-family:'Jua';font-size:17.5px;color:#2F7AAE;line-height:1.4}
+.a-num{flex:none;width:30px;height:30px;border-radius:var(--sh-num-radius);background:var(--sh-num-bg);color:var(--sh-num-ink);
+  display:flex;align-items:center;justify-content:center;font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);font-size:15px;margin-top:2px}
+.a-title{margin:0;font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);font-size:17.5px;color:var(--sh-acc-ink);line-height:1.4}
 .a-goal{margin:1px 0 0;font-size:12px;color:#8A949C}
 .a-inst,.t-inst{margin:8px 0 10px 41px;font-size:14.5px;line-height:1.7}
 
@@ -1085,27 +1166,27 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 .lay-write{margin-left:41px;border-radius:4px;
   background:repeating-linear-gradient(#fff,#fff 32px,#B9CBD8 32px,#B9CBD8 33.5px);
   border-bottom:1.5px solid #B9CBD8}
-.lay-draw{margin-left:41px;height:150px;border:2px dashed #F0AEC0;border-radius:16px;
+.lay-draw{margin-left:41px;height:150px;border:var(--sh-line-w) var(--sh-line-style) var(--sh-acc2);border-radius:var(--sh-radius-md);
   display:flex;align-items:flex-end;justify-content:flex-end;padding:8px 12px}
-.lay-draw span{font-size:11px;color:#D9A5B4}
+.lay-draw span{font-size:11px;color:var(--sh-acc2-ink)}
 .lay-table{margin-left:41px;width:calc(100% - 41px);border-collapse:collapse;font-size:13.5px}
-.lay-table th{background:#E4F0F9;color:#2F7AAE;font-family:'Jua';font-weight:400;
-  border:1.5px solid #A9C9E0;padding:7px 10px}
-.lay-table td{border:1.5px solid #A9C9E0;height:44px;padding:6px 10px}
+.lay-table th{background:var(--sh-acc-soft);color:var(--sh-acc-ink);font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);
+  border:1.5px solid var(--sh-border);padding:7px 10px}
+.lay-table td{border:1.5px solid var(--sh-border);height:44px;padding:6px 10px}
 .lay-mind{margin-left:41px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;
-  padding:14px 6px;border:2px dashed #C4D6E3;border-radius:16px}
+  padding:14px 6px;border:2px dashed var(--sh-border);border-radius:var(--sh-radius-md)}
 .bubble{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;text-align:center}
-.bubble.center{background:#4B9CD3;color:#fff;font-family:'Jua';font-size:15px;padding:12px 22px}
-.bubble.empty{width:104px;height:52px;border:2px dashed #F0AEC0;background:#fff}
+.bubble.center{width:132px;height:64px;border:2.5px solid var(--sh-acc);background:#fff;border-radius:var(--sh-num-radius)}
+.bubble.empty{width:104px;height:52px;border:var(--sh-line-w) var(--sh-line-style) var(--sh-acc2);background:#fff}
 .lay-check{list-style:none;margin:0 0 0 41px;padding:0;font-size:14px}
 .lay-check li{display:flex;gap:10px;align-items:flex-start;padding:6px 0;line-height:1.6}
-.lay-check .box{flex:none;width:18px;height:18px;border:2px solid #4B9CD3;border-radius:5px;margin-top:2px}
+.lay-check .box{flex:none;width:18px;height:18px;border:2px solid var(--sh-acc);border-radius:5px;margin-top:2px}
 .lay-pair{margin-left:41px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.pair-box{height:110px;border:2px solid #A9C9E0;border-radius:16px;padding:8px 12px;position:relative}
-.pair-box.friend{border-color:#F0AEC0}
-.pair-label{font-family:'Jua';font-size:12px;color:#2F7AAE;background:#E4F0F9;
+.pair-box{height:110px;border:2px solid var(--sh-border);border-radius:var(--sh-radius-md);padding:8px 12px;position:relative}
+.pair-box.friend{border-color:var(--sh-acc2)}
+.pair-label{font-family:var(--sh-head-font);font-weight:var(--sh-head-weight);font-size:12px;color:var(--sh-acc-ink);background:var(--sh-acc-soft);
   border-radius:999px;padding:2px 10px}
-.pair-box.friend .pair-label{color:#C56B85;background:#FDE3EA}
+.pair-box.friend .pair-label{color:var(--sh-acc2-ink);background:var(--sh-acc2-soft)}
 
 /* ── 교사용 ── */
 .t-act .a-title{color:#C0392E}
@@ -1169,14 +1250,15 @@ input[type=range]{width:100%;accent-color:var(--sky)}
 /* ── 인쇄: A4 페이지 그대로, 워터마크 없음 ── */
 @media print{
   .no-print{display:none !important}
+  .measure,.probe{display:none !important}
   .app{background:#fff;min-height:0}
   .body{display:block;min-height:0}
   .panel{display:none}
   .desk{background:none;display:block}
   .sheet-scroll{overflow:visible;padding:0}
   .pages{gap:0;display:block}
-  .page{width:210mm;height:296.5mm;margin:0 auto;box-shadow:none;border-radius:0;
-    page-break-after:always;break-after:page}
+  .page{width:210mm;height:297mm;margin:0;box-shadow:none;border-radius:0;
+    page-break-after:always;break-after:page;page-break-inside:avoid}
   .page:last-of-type{page-break-after:auto;break-after:auto}
 }
 @page{size:A4 portrait;margin:0}
